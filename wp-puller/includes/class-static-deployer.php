@@ -268,16 +268,17 @@ class WP_Puller_Static_Deployer {
 			RecursiveDirectoryIterator::SKIP_DOTS
 		);
 
-		// Filter out hidden entries, symlinks, and their children.
+		// Filter out hidden directories and symlink directories at the iterator level.
+		// Hidden files and symlink files are allowed through so they can be reported.
 		$filter_iterator = new RecursiveCallbackFilterIterator(
 			$dir_iterator,
 			function( $current, $key, $iterator ) {
-				// Skip hidden files and directories.
-				if ( substr( $current->getBasename(), 0, 1 ) === '.' ) {
+				// Skip hidden directories (and their children).
+				if ( $current->isDir() && substr( $current->getBasename(), 0, 1 ) === '.' ) {
 					return false;
 				}
-				// Skip symlinks (both files and directories).
-				if ( $current->isLink() ) {
+				// Skip symlink directories (and their children).
+				if ( $current->isDir() && $current->isLink() ) {
 					return false;
 				}
 				return true;
@@ -290,8 +291,8 @@ class WP_Puller_Static_Deployer {
 		);
 
 		foreach ( $iterator as $file ) {
-			// Defense in depth: skip directories and any remaining symlinks.
-			if ( ! $file->isFile() || $file->isLink() ) {
+			// Skip directories.
+			if ( ! $file->isFile() ) {
 				continue;
 			}
 
@@ -311,6 +312,18 @@ class WP_Puller_Static_Deployer {
 
 			$relative_source = substr( $pathname, strlen( $prefix ) );
 			$relative_source = $this->normalize_relative_path( $relative_source );
+
+			// Report symlinks as skipped (defense in depth for symlink files).
+			if ( $file->isLink() ) {
+				$skipped[] = array(
+					'source' => $relative_source,
+					'target' => $relative_source,
+					'action' => 'skipped',
+					'size'   => 0,
+					'reason' => __( 'Symlinks are not allowed.', 'wp-puller' ),
+				);
+				continue;
+			}
 
 			if ( $this->is_blocked_path( $relative_source ) ) {
 				$blocked[] = array(
