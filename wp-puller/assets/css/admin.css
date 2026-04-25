@@ -511,6 +511,122 @@
     border-radius: 4px;
 }
 
+/* Static Dry-Run Results */
+.wp-puller-static-result {
+    margin-top: 16px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.wp-puller-dry-run-summary {
+    background: #f0f6fc;
+    border: 1px solid #c5d9ed;
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+
+.wp-puller-dry-run-summary h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+
+.wp-puller-dry-run-summary ul {
+    margin: 0;
+    list-style: none;
+}
+
+.wp-puller-dry-run-summary li {
+    margin: 4px 0;
+}
+
+.wp-puller-count-allowed {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+.wp-puller-count-blocked {
+    color: #d63638;
+    font-weight: 600;
+}
+
+.wp-puller-count-skipped {
+    color: #787c82;
+    font-weight: 600;
+}
+
+.wp-puller-dry-run-warnings {
+    background: #fcf9e8;
+    border: 1px solid #f0e6a8;
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+
+.wp-puller-dry-run-warnings h4 {
+    margin: 0 0 8px;
+    color: #997404;
+    font-size: 14px;
+}
+
+.wp-puller-dry-run-section {
+    margin-bottom: 12px;
+}
+
+.wp-puller-dry-run-section h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+
+.wp-puller-dry-run-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.wp-puller-dry-run-table th,
+.wp-puller-dry-run-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.wp-puller-dry-run-table th {
+    background: #f6f7f7;
+    font-weight: 600;
+}
+
+.wp-puller-dry-run-table code {
+    font-size: 11px;
+    background: #f0f0f1;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.wp-puller-action {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.wp-puller-action-add {
+    background: #edfaef;
+    color: #00a32a;
+}
+
+.wp-puller-action-replace {
+    background: #fcf0f1;
+    color: #d63638;
+}
+
+.wp-puller-action-blocked {
+    background: #fcf0f1;
+    color: #d63638;
+}
+
 /* Footer */
 .wp-puller-footer {
     margin-top: 20px;

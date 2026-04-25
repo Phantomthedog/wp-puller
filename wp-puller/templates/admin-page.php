@@ -273,6 +273,38 @@ $pat_status   = WP_Puller_Admin::get_pat_status();
             </div>
         </div>
 
+        <!-- Static Pages Card -->
+        <div class="wp-puller-card wp-puller-card-static">
+            <div class="wp-puller-card-header">
+                <h2><?php esc_html_e( 'Static Pages', 'wp-puller' ); ?></h2>
+                <span class="wp-puller-badge wp-puller-badge-info"><?php esc_html_e( 'Dry Run', 'wp-puller' ); ?></span>
+            </div>
+            <div class="wp-puller-card-body">
+                <div class="wp-puller-field">
+                    <label for="wp-puller-static-source"><?php esc_html_e( 'Source Path', 'wp-puller' ); ?></label>
+                    <input type="text"
+                           id="wp-puller-static-source"
+                           name="static_source_path"
+                           value="static-root-pages"
+                           class="regular-text">
+                    <p class="description"><?php esc_html_e( 'Subdirectory in the repo containing static HTML/assets to preview for deployment.', 'wp-puller' ); ?></p>
+                </div>
+
+                <div class="wp-puller-actions">
+                    <button type="button" class="button" id="wp-puller-static-dry-run">
+                        <span class="dashicons dashicons-visibility"></span>
+                        <?php esc_html_e( 'Dry Run Preview', 'wp-puller' ); ?>
+                    </button>
+                    <button type="button" class="button button-primary" disabled title="<?php esc_attr_e( 'Deploy disabled in dry-run-only build.', 'wp-puller' ); ?>">
+                        <span class="dashicons dashicons-upload"></span>
+                        <?php esc_html_e( 'Deploy Now', 'wp-puller' ); ?>
+                    </button>
+                </div>
+
+                <div class="wp-puller-static-result" id="wp-puller-static-result" style="display: none;"></div>
+            </div>
+        </div>
+
         <!-- Activity Log Card -->
         <div class="wp-puller-card wp-puller-card-logs">
             <div class="wp-puller-card-header">

@@ -44,18 +44,27 @@ class WP_Puller_Admin {
     private $logger;
 
     /**
+     * Static deployer instance.
+     *
+     * @var WP_Puller_Static_Deployer
+     */
+    private $static_deployer;
+
+    /**
      * Constructor.
      *
-     * @param WP_Puller_GitHub_API    $github_api GitHub API instance.
-     * @param WP_Puller_Theme_Updater $updater    Theme updater instance.
-     * @param WP_Puller_Backup        $backup     Backup instance.
-     * @param WP_Puller_Logger        $logger     Logger instance.
+     * @param WP_Puller_GitHub_API       $github_api      GitHub API instance.
+     * @param WP_Puller_Theme_Updater    $updater         Theme updater instance.
+     * @param WP_Puller_Backup           $backup          Backup instance.
+     * @param WP_Puller_Logger           $logger          Logger instance.
+     * @param WP_Puller_Static_Deployer  $static_deployer Static deployer instance.
      */
-    public function __construct( $github_api, $updater, $backup, $logger ) {
-        $this->github_api = $github_api;
-        $this->updater    = $updater;
-        $this->backup     = $backup;
-        $this->logger     = $logger;
+    public function __construct( $github_api, $updater, $backup, $logger, $static_deployer = null ) {
+        $this->github_api      = $github_api;
+        $this->updater         = $updater;
+        $this->backup          = $backup;
+        $this->logger          = $logger;
+        $this->static_deployer = $static_deployer;
 
         $this->init_hooks();
     }
@@ -75,6 +84,7 @@ class WP_Puller_Admin {
         add_action( 'wp_ajax_wp_puller_delete_backup', array( $this, 'ajax_delete_backup' ) );
         add_action( 'wp_ajax_wp_puller_regenerate_secret', array( $this, 'ajax_regenerate_secret' ) );
         add_action( 'wp_ajax_wp_puller_clear_logs', array( $this, 'ajax_clear_logs' ) );
+        add_action( 'wp_ajax_wp_puller_static_dry_run', array( $this, 'ajax_static_dry_run' ) );
     }
 
     /**
@@ -445,5 +455,30 @@ class WP_Puller_Admin {
             'prefix'    => substr( $decrypted, 0, 10 ) . '...',
             'message'   => sprintf( 'Token OK (%s, %d chars)', $type, strlen( $decrypted ) ),
         );
+    }
+
+    /**
+     * AJAX: Run static deployment dry-run preview.
+     */
+    public function ajax_static_dry_run() {
+        check_ajax_referer( 'wp_puller_nonce', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Permission denied.', 'wp-puller' ) ) );
+        }
+
+        if ( ! $this->static_deployer ) {
+            wp_send_json_error( array( 'message' => __( 'Static deployer not available.', 'wp-puller' ) ) );
+        }
+
+        $source_path = isset( $_POST['source_path'] ) ? sanitize_text_field( wp_unslash( $_POST['source_path'] ) ) : 'static-root-pages';
+
+        $report = $this->static_deployer->dry_run( $source_path );
+
+        if ( is_wp_error( $report ) ) {
+            wp_send_json_error( array( 'message' => $report->get_error_message() ) );
+        }
+
+        wp_send_json_success( $report );
     }
 }

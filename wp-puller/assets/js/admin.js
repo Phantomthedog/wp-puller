@@ -20,6 +20,7 @@
             $('#wp-puller-update-now').on('click', this.updateTheme.bind(this));
             $('#wp-puller-regenerate-secret').on('click', this.regenerateSecret.bind(this));
             $('#wp-puller-clear-logs').on('click', this.clearLogs.bind(this));
+            $('#wp-puller-static-dry-run').on('click', this.staticDryRun.bind(this));
 
             $(document).on('click', '.wp-puller-restore-backup', this.restoreBackup.bind(this));
             $(document).on('click', '.wp-puller-delete-backup', this.deleteBackup.bind(this));
@@ -341,6 +342,107 @@
                     WPPuller.setLoading($btn, false);
                 }
             });
+        },
+
+        staticDryRun: function(e) {
+            var $btn = $(e.currentTarget);
+            var sourcePath = $('#wp-puller-static-source').val();
+
+            if (!sourcePath) {
+                this.showNotice('Please enter a source path.', 'error');
+                return;
+            }
+
+            this.setLoading($btn, true);
+
+            var $result = $('#wp-puller-static-result');
+            $result.hide().html('');
+
+            $.ajax({
+                url: wpPuller.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_puller_static_dry_run',
+                    nonce: wpPuller.nonce,
+                    source_path: sourcePath
+                },
+                success: function(response) {
+                    if (response.success) {
+                        WPPuller.renderStaticDryRunResult(response.data, $result);
+                    } else {
+                        WPPuller.showNotice(response.data.message, 'error');
+                    }
+                },
+                error: function() {
+                    WPPuller.showNotice(wpPuller.strings.error, 'error');
+                },
+                complete: function() {
+                    WPPuller.setLoading($btn, false);
+                }
+            });
+        },
+
+        renderStaticDryRunResult: function(data, $container) {
+            var html = '<div class="wp-puller-dry-run-summary">';
+
+            html += '<h4>Dry-Run Report</h4>';
+            html += '<ul>';
+            var total = (data.summary.allowed_count || 0) + (data.summary.blocked_count || 0) + (data.summary.skipped_count || 0);
+            html += '<li><strong>Total files scanned:</strong> ' + total + '</li>';
+            html += '<li><strong>Allowed to deploy:</strong> <span class="wp-puller-count-allowed">' + (data.summary.allowed_count || 0) + '</span></li>';
+            html += '<li><strong>Blocked:</strong> <span class="wp-puller-count-blocked">' + (data.summary.blocked_count || 0) + '</span></li>';
+            html += '<li><strong>Skipped:</strong> <span class="wp-puller-count-skipped">' + (data.summary.skipped_count || 0) + '</span></li>';
+            html += '<li><strong>Total size:</strong> ' + this.escapeHtml(data.summary.total_size_fmt || '-') + '</li>';
+            html += '</ul>';
+            html += '</div>';
+
+            if (data.warnings && data.warnings.length) {
+                html += '<div class="wp-puller-dry-run-warnings">';
+                html += '<h4>Warnings</h4>';
+                html += '<ul>';
+                for (var i = 0; i < data.warnings.length; i++) {
+                    html += '<li>' + this.escapeHtml(data.warnings[i]) + '</li>';
+                }
+                html += '</ul>';
+                html += '</div>';
+            }
+
+            if (data.allowed && data.allowed.length) {
+                html += '<div class="wp-puller-dry-run-section">';
+                html += '<h4>Allowed Files (' + data.allowed.length + ')</h4>';
+                html += '<table class="wp-puller-dry-run-table"><thead><tr><th>File</th><th>Action</th><th>Size</th></tr></thead><tbody>';
+                for (var j = 0; j < data.allowed.length; j++) {
+                    var f = data.allowed[j];
+                    html += '<tr>';
+                    html += '<td><code>' + this.escapeHtml(f.source) + '</code></td>';
+                    html += '<td><span class="wp-puller-action wp-puller-action-' + this.escapeHtml(f.action) + '">' + this.escapeHtml(f.action) + '</span></td>';
+                    html += '<td>' + this.escapeHtml(f.size_fmt || '-') + '</td>';
+                    html += '</tr>';
+                }
+                html += '</tbody></table>';
+                html += '</div>';
+            }
+
+            if (data.blocked && data.blocked.length) {
+                html += '<div class="wp-puller-dry-run-section">';
+                html += '<h4>Blocked Files (' + data.blocked.length + ')</h4>';
+                html += '<table class="wp-puller-dry-run-table"><thead><tr><th>File</th><th>Reason</th></tr></thead><tbody>';
+                for (var k = 0; k < data.blocked.length; k++) {
+                    var b = data.blocked[k];
+                    html += '<tr>';
+                    html += '<td><code>' + this.escapeHtml(b.source) + '</code></td>';
+                    html += '<td>' + this.escapeHtml(b.reason) + '</td>';
+                    html += '</tr>';
+                }
+                html += '</tbody></table>';
+                html += '</div>';
+            }
+
+            $container.html(html).show();
+
+            $('html, body').animate({
+                scrollTop: $container.offset().top - 50
+            }, 300);
         },
 
         copyToClipboard: function(e) {
