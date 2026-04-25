@@ -461,11 +461,7 @@ class WP_Puller_Admin {
      * AJAX: Run static deployment dry-run preview.
      */
     public function ajax_static_dry_run() {
-        check_ajax_referer( 'wp_puller_nonce', 'nonce' );
-
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( array( 'message' => __( 'Permission denied.', 'wp-puller' ) ) );
-        }
+        $this->verify_ajax_request();
 
         if ( ! $this->static_deployer ) {
             wp_send_json_error( array( 'message' => __( 'Static deployer not available.', 'wp-puller' ) ) );

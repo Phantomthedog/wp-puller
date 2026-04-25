@@ -202,13 +202,23 @@ class WP_Puller_Static_Deployer {
 			$source_path = get_option( 'wp_puller_static_source_path', 'static-root-pages' );
 		}
 
-		if ( empty( $source_path ) ) {
-			$source_path = 'static-root-pages';
+		$source_path = $this->sanitize_source_path( $source_path );
+		if ( is_wp_error( $source_path ) ) {
+			return $source_path;
 		}
 
-		$source_dir = $extracted_dir . '/' . $source_path;
+		$extracted_real = realpath( $extracted_dir );
+		if ( false === $extracted_real ) {
+			return new WP_Error(
+				'invalid_extracted_dir',
+				__( 'Extracted repository directory is invalid.', 'wp-puller' )
+			);
+		}
 
-		if ( ! is_dir( $source_dir ) ) {
+		$source_dir = $extracted_real . '/' . $source_path;
+		$source_real = realpath( $source_dir );
+
+		if ( false === $source_real ) {
 			return new WP_Error(
 				'source_not_found',
 				sprintf(
@@ -219,7 +229,26 @@ class WP_Puller_Static_Deployer {
 			);
 		}
 
-		return $source_dir;
+		// Jail check: source must be strictly inside the extracted directory.
+		if ( strpos( $source_real, $extracted_real . '/' ) !== 0 ) {
+			return new WP_Error(
+				'source_path_jail',
+				__( 'Source path is outside the repository directory.', 'wp-puller' )
+			);
+		}
+
+		if ( ! is_dir( $source_real ) ) {
+			return new WP_Error(
+				'source_not_dir',
+				sprintf(
+					/* translators: %s: source path */
+					__( 'Static source path "%s" is not a directory.', 'wp-puller' ),
+					$source_path
+				)
+			);
+		}
+
+		return $source_real;
 	}
 
 	/**
@@ -234,29 +263,54 @@ class WP_Puller_Static_Deployer {
 		$skipped = array();
 		$warnings = array();
 
+		$dir_iterator = new RecursiveDirectoryIterator(
+			$source_dir,
+			RecursiveDirectoryIterator::SKIP_DOTS
+		);
+
+		// Filter out hidden entries, symlinks, and their children.
+		$filter_iterator = new RecursiveCallbackFilterIterator(
+			$dir_iterator,
+			function( $current, $key, $iterator ) {
+				// Skip hidden files and directories.
+				if ( substr( $current->getBasename(), 0, 1 ) === '.' ) {
+					return false;
+				}
+				// Skip symlinks (both files and directories).
+				if ( $current->isLink() ) {
+					return false;
+				}
+				return true;
+			}
+		);
+
 		$iterator = new RecursiveIteratorIterator(
-			new RecursiveDirectoryIterator( $source_dir, RecursiveDirectoryIterator::SKIP_DOTS ),
+			$filter_iterator,
 			RecursiveIteratorIterator::SELF_FIRST
 		);
 
 		foreach ( $iterator as $file ) {
-			if ( ! $file->isFile() ) {
+			// Defense in depth: skip directories and any remaining symlinks.
+			if ( ! $file->isFile() || $file->isLink() ) {
 				continue;
 			}
 
-			$relative_source = str_replace( $source_dir . '/', '', $file->getPathname() );
-			$relative_source = $this->normalize_relative_path( $relative_source );
+			$pathname = $file->getPathname();
+			$prefix   = $source_dir . '/';
 
-			if ( is_link( $file->getPathname() ) ) {
+			if ( strpos( $pathname, $prefix ) !== 0 ) {
 				$skipped[] = array(
-					'source' => $relative_source,
-					'target' => $relative_source,
+					'source' => $pathname,
+					'target' => $pathname,
 					'action' => 'skipped',
 					'size'   => 0,
-					'reason' => __( 'Symlinks are not allowed.', 'wp-puller' ),
+					'reason' => __( 'Path prefix mismatch during scanning.', 'wp-puller' ),
 				);
 				continue;
 			}
+
+			$relative_source = substr( $pathname, strlen( $prefix ) );
+			$relative_source = $this->normalize_relative_path( $relative_source );
 
 			if ( $this->is_blocked_path( $relative_source ) ) {
 				$blocked[] = array(
@@ -327,6 +381,54 @@ class WP_Puller_Static_Deployer {
 	}
 
 	/**
+	 * Sanitize and validate a source path.
+	 *
+	 * @param string $source_path Raw source path.
+	 * @return string|WP_Error Sanitized path, or error.
+	 */
+	private function sanitize_source_path( $source_path ) {
+		if ( empty( $source_path ) ) {
+			return 'static-root-pages';
+		}
+
+		// Reject absolute paths (Unix or Windows).
+		if ( substr( $source_path, 0, 1 ) === '/' || substr( $source_path, 0, 1 ) === '\\' ) {
+			return new WP_Error(
+				'invalid_source_path',
+				__( 'Source path must be relative.', 'wp-puller' )
+			);
+		}
+
+		// Reject Windows drive letters (e.g., C:\ or C:/).
+		if ( preg_match( '/^[a-zA-Z]:[\\\\\\/]/', $source_path ) ) {
+			return new WP_Error(
+				'invalid_source_path',
+				__( 'Source path must be relative.', 'wp-puller' )
+			);
+		}
+
+		// Normalize slashes.
+		$source_path = str_replace( '\\', '/', $source_path );
+
+		// Reject parent-directory traversal.
+		if ( strpos( $source_path, '..' ) !== false ) {
+			return new WP_Error(
+				'invalid_source_path',
+				__( 'Source path cannot contain parent directory references.', 'wp-puller' )
+			);
+		}
+
+		// Trim leading/trailing slashes.
+		$source_path = trim( $source_path, '/' );
+
+		if ( empty( $source_path ) ) {
+			return 'static-root-pages';
+		}
+
+		return $source_path;
+	}
+
+	/**
 	 * Check if a relative path is blocked.
 	 *
 	 * @param string $relative_path Path relative to ABSPATH.
@@ -339,7 +441,8 @@ class WP_Puller_Static_Deployer {
 			return true;
 		}
 
-		if ( basename( $lower ) === 'index.php' ) {
+		$basename = basename( $lower );
+		if ( $basename === 'index.php' || $basename === '.htaccess' ) {
 			return true;
 		}
 
