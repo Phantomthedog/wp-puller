@@ -22,8 +22,8 @@
             $('#wp-puller-update-now').on('click', this.updateTheme.bind(this));
             $('#wp-puller-regenerate-secret').on('click', this.regenerateSecret.bind(this));
             $('#wp-puller-clear-logs').on('click', this.clearLogs.bind(this));
-            $('#wp-puller-static-dry-run').on('click', this.staticDryRun.bind(this));
-            $('#wp-puller-static-deploy').on('click', this.staticDeploy.bind(this));
+            $(document).on('click', '#wp-puller-static-dry-run', this.staticDryRun.bind(this));
+            $(document).on('click', '#wp-puller-static-deploy', this.staticDeploy.bind(this));
             $(document).on('click', '.wp-puller-static-rollback', this.staticRollback.bind(this));
 
             $(document).on('click', '.wp-puller-restore-backup', this.restoreBackup.bind(this));

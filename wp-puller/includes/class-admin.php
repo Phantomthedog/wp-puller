@@ -123,18 +123,21 @@ class WP_Puller_Admin {
             return;
         }
 
+        $css_version = filemtime( WP_PULLER_PLUGIN_DIR . 'assets/css/admin.css' );
+        $js_version  = filemtime( WP_PULLER_PLUGIN_DIR . 'assets/js/admin.js' );
+
         wp_enqueue_style(
             'wp-puller-admin',
             WP_PULLER_PLUGIN_URL . 'assets/css/admin.css',
             array(),
-            WP_PULLER_VERSION
+            $css_version ? $css_version : WP_PULLER_VERSION
         );
 
         wp_enqueue_script(
             'wp-puller-admin',
             WP_PULLER_PLUGIN_URL . 'assets/js/admin.js',
             array( 'jquery' ),
-            WP_PULLER_VERSION,
+            $js_version ? $js_version : WP_PULLER_VERSION,
             true
         );
 
