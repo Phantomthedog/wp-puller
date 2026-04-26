@@ -295,13 +295,53 @@ $pat_status   = WP_Puller_Admin::get_pat_status();
                         <span class="dashicons dashicons-visibility"></span>
                         <?php esc_html_e( 'Dry Run Preview', 'wp-puller' ); ?>
                     </button>
-                    <button type="button" class="button button-primary" disabled title="<?php esc_attr_e( 'Deploy disabled in dry-run-only build.', 'wp-puller' ); ?>">
+                    <button type="button" class="button button-primary" id="wp-puller-static-deploy" disabled>
                         <span class="dashicons dashicons-upload"></span>
                         <?php esc_html_e( 'Deploy Now', 'wp-puller' ); ?>
                     </button>
                 </div>
 
                 <div class="wp-puller-static-result" id="wp-puller-static-result" style="display: none;"></div>
+
+                <!-- Deploy Result / Manifest Panel -->
+                <div class="wp-puller-deploy-result" id="wp-puller-deploy-result" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Static Rollback Card -->
+        <div class="wp-puller-card wp-puller-card-rollback">
+            <div class="wp-puller-card-header">
+                <h2><?php esc_html_e( 'Static Rollback', 'wp-puller' ); ?></h2>
+            </div>
+            <div class="wp-puller-card-body">
+                <?php if ( empty( $static_backups ) ) : ?>
+                    <p class="wp-puller-empty"><?php esc_html_e( 'No static deploy backups yet.', 'wp-puller' ); ?></p>
+                <?php else : ?>
+                    <table class="wp-puller-backup-table">
+                        <thead>
+                            <tr>
+                                <th><?php esc_html_e( 'Date', 'wp-puller' ); ?></th>
+                                <th><?php esc_html_e( 'Replaced', 'wp-puller' ); ?></th>
+                                <th><?php esc_html_e( 'Added', 'wp-puller' ); ?></th>
+                                <th><?php esc_html_e( 'Actions', 'wp-puller' ); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ( $static_backups as $sb ) : ?>
+                                <tr>
+                                    <td><?php echo esc_html( $sb['timestamp'] ); ?></td>
+                                    <td><?php echo esc_html( $sb['replaced'] ); ?></td>
+                                    <td><?php echo esc_html( $sb['added'] ); ?></td>
+                                    <td>
+                                        <button type="button" class="button button-small wp-puller-static-rollback" data-backup-id="<?php echo esc_attr( $sb['id'] ); ?>">
+                                            <?php esc_html_e( 'Rollback', 'wp-puller' ); ?>
+                                        </button>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
             </div>
         </div>
 

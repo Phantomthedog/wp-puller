@@ -81,6 +81,13 @@ final class WP_Puller {
     public $static_deployer = null;
 
     /**
+     * Static backup instance.
+     *
+     * @var WP_Puller_Static_Backup
+     */
+    public $static_backup = null;
+
+    /**
      * Main WP_Puller Instance.
      *
      * Ensures only one instance of WP_Puller is loaded or can be loaded.
@@ -113,6 +120,7 @@ final class WP_Puller {
         require_once WP_PULLER_PLUGIN_DIR . 'includes/class-theme-updater.php';
         require_once WP_PULLER_PLUGIN_DIR . 'includes/class-webhook-handler.php';
         require_once WP_PULLER_PLUGIN_DIR . 'includes/class-static-deployer.php';
+        require_once WP_PULLER_PLUGIN_DIR . 'includes/class-static-backup.php';
 
         if ( is_admin() ) {
             require_once WP_PULLER_PLUGIN_DIR . 'includes/class-admin.php';
@@ -158,9 +166,10 @@ final class WP_Puller {
         $this->updater         = new WP_Puller_Theme_Updater( $this->github_api, $this->backup, $this->logger );
         $this->webhook         = new WP_Puller_Webhook_Handler( $this->updater, $this->logger );
         $this->static_deployer = new WP_Puller_Static_Deployer( $this->github_api, $this->logger );
+        $this->static_backup  = new WP_Puller_Static_Backup( $this->logger );
 
         if ( is_admin() ) {
-            $this->admin = new WP_Puller_Admin( $this->github_api, $this->updater, $this->backup, $this->logger, $this->static_deployer );
+            $this->admin = new WP_Puller_Admin( $this->github_api, $this->updater, $this->backup, $this->logger, $this->static_deployer, $this->static_backup );
         }
     }
 

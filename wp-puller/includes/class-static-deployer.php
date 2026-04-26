@@ -535,6 +535,375 @@ class WP_Puller_Static_Deployer {
 	}
 
 	/**
+	 * Perform preflight checks before deploying.
+	 *
+	 * @param string $source_dir    Source directory inside extracted repo.
+	 * @param array  $allowed_files Files from dry-run allowed list.
+	 * @return true|WP_Error True if all checks pass, WP_Error on failure.
+	 */
+	private function preflight( $source_dir, $allowed_files ) {
+		// 1. Verify backup directory is writable.
+		$backup_base = trailingslashit( WP_CONTENT_DIR ) . 'wp-puller-static-backups';
+		if ( ! is_dir( $backup_base ) ) {
+			$created = wp_mkdir_p( $backup_base );
+			if ( ! $created ) {
+				return new WP_Error(
+					'preflight_backup_dir',
+					__( 'Preflight failed: cannot create backup directory.', 'wp-puller' )
+				);
+			}
+		}
+		if ( ! wp_is_writable( $backup_base ) ) {
+			return new WP_Error(
+				'preflight_backup_writable',
+				__( 'Preflight failed: backup directory is not writable.', 'wp-puller' )
+			);
+		}
+
+		// 2. Verify every source file is readable and not forbidden.
+		foreach ( $allowed_files as $file ) {
+			$relative = $file['source'];
+			$source   = $source_dir . '/' . $relative;
+			$target   = ABSPATH . $relative;
+
+			// Source must exist and be readable.
+			if ( ! is_readable( $source ) ) {
+				return new WP_Error(
+					'preflight_source_unreadable',
+					sprintf(
+						/* translators: %s: file path */
+						__( 'Preflight failed: source file unreadable: %s', 'wp-puller' ),
+						$relative
+					)
+				);
+			}
+
+			// No symlinks.
+			if ( is_link( $source ) ) {
+				return new WP_Error(
+					'preflight_source_symlink',
+					sprintf(
+						/* translators: %s: file path */
+						__( 'Preflight failed: source is a symlink: %s', 'wp-puller' ),
+						$relative
+					)
+				);
+			}
+
+			// No hidden files.
+			if ( substr( basename( $relative ), 0, 1 ) === '.' ) {
+				return new WP_Error(
+					'preflight_hidden_file',
+					sprintf(
+						/* translators: %s: file path */
+						__( 'Preflight failed: hidden file detected: %s', 'wp-puller' ),
+						$relative
+					)
+				);
+			}
+
+			// No forbidden paths.
+			if ( $this->is_blocked_path( $relative ) ) {
+				return new WP_Error(
+					'preflight_blocked_path',
+					sprintf(
+						/* translators: %s: file path */
+						__( 'Preflight failed: blocked path: %s', 'wp-puller' ),
+						$relative
+					)
+				);
+			}
+
+			// Target must stay within ABSPATH.
+			$target_dir = dirname( $target );
+			$target_dir_real = realpath( $target_dir );
+			$abspath_real    = realpath( ABSPATH );
+			if ( false === $target_dir_real || strpos( $target_dir_real, $abspath_real ) !== 0 ) {
+				return new WP_Error(
+					'preflight_target_jail',
+					sprintf(
+						/* translators: %s: file path */
+						__( 'Preflight failed: target escapes ABSPATH: %s', 'wp-puller' ),
+						$relative
+					)
+				);
+			}
+
+			// Target directory must be writable or creatable.
+			if ( is_dir( $target_dir ) ) {
+				if ( ! wp_is_writable( $target_dir ) ) {
+					return new WP_Error(
+						'preflight_target_not_writable',
+						sprintf(
+							/* translators: %s: directory path */
+							__( 'Preflight failed: target directory not writable: %s', 'wp-puller' ),
+							$target_dir
+						)
+					);
+				}
+			} else {
+				// Directory will be created — check parent is writable.
+				$parent_dir = dirname( $target_dir );
+				$parent_real = realpath( $parent_dir );
+				if ( false === $parent_real || ! wp_is_writable( $parent_real ) ) {
+					return new WP_Error(
+						'preflight_parent_not_writable',
+						sprintf(
+							/* translators: %s: directory path */
+							__( 'Preflight failed: cannot create target directory: %s', 'wp-puller' ),
+							$target_dir
+						)
+					);
+				}
+			}
+
+			// If target exists, it must be backupable (readable for copy).
+			if ( file_exists( $target ) ) {
+				if ( ! is_readable( $target ) ) {
+					return new WP_Error(
+						'preflight_target_unreadable',
+						sprintf(
+							/* translators: %s: file path */
+							__( 'Preflight failed: existing target unreadable: %s', 'wp-puller' ),
+							$relative
+						)
+					);
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Deploy static files from extracted repo to ABSPATH.
+	 *
+	 * Server recomputes dry_run() immediately before copying.
+	 * Does NOT trust a client-submitted manifest.
+	 *
+	 * @param string             $source_path    Optional source path override.
+	 * @param WP_Puller_Static_Backup $backup_manager Backup manager instance.
+	 * @return array|WP_Error Deploy result array, or WP_Error on failure.
+	 */
+	public function deploy( $source_path = '', $backup_manager ) {
+		// Rate limit check.
+		$rate_check = $backup_manager->check_rate_limit();
+		if ( is_wp_error( $rate_check ) ) {
+			return $rate_check;
+		}
+
+		// Recompute dry_run server-side. Do NOT trust client manifest.
+		$dry_run_result = $this->dry_run( $source_path );
+
+		if ( is_wp_error( $dry_run_result ) ) {
+			return $dry_run_result;
+		}
+
+		if ( empty( $dry_run_result['allowed'] ) || ! is_array( $dry_run_result['allowed'] ) ) {
+			return new WP_Error(
+				'no_files_to_deploy',
+				__( 'No files to deploy.', 'wp-puller' )
+			);
+		}
+
+		$allowed_files = $dry_run_result['allowed'];
+
+		// Re-download and extract repo for deploy (do not reuse temp files from dry_run).
+		$repo_url = get_option( 'wp_puller_repo_url', '' );
+		$branch   = get_option( 'wp_puller_branch', 'main' );
+		$parsed   = $this->github_api->parse_repo_url( $repo_url );
+
+		if ( ! $parsed ) {
+			return new WP_Error(
+				'invalid_repo',
+				__( 'Invalid GitHub repository URL.', 'wp-puller' )
+			);
+		}
+
+		$zip_file = $this->github_api->download_archive( $parsed['owner'], $parsed['repo'], $branch );
+
+		if ( is_wp_error( $zip_file ) ) {
+			return $zip_file;
+		}
+
+		$extracted_dir = $this->download_and_extract_repo( $zip_file, $parsed['repo'], $branch );
+		@unlink( $zip_file );
+
+		if ( is_wp_error( $extracted_dir ) ) {
+			return $extracted_dir;
+		}
+
+		$source_dir = $this->get_static_source_path( $extracted_dir, $source_path );
+
+		if ( is_wp_error( $source_dir ) ) {
+			$this->cleanup_temp_files();
+			return $source_dir;
+		}
+
+		// Preflight checks.
+		$preflight = $this->preflight( $source_dir, $allowed_files );
+		if ( is_wp_error( $preflight ) ) {
+			$this->cleanup_temp_files();
+			return $preflight;
+		}
+
+		// Start backup point.
+		$backup_id = $backup_manager->start_backup();
+		if ( is_wp_error( $backup_id ) ) {
+			$this->cleanup_temp_files();
+			return $backup_id;
+		}
+
+		$added      = array();
+		$replaced   = array();
+		$failed     = array();
+		$total_size = 0;
+
+		foreach ( $allowed_files as $file ) {
+			$relative = $file['source'];
+			$source   = $source_dir . '/' . $relative;
+			$target   = ABSPATH . $relative;
+
+			$action = file_exists( $target ) ? 'replace' : 'add';
+
+			// Backup existing file before overwrite.
+			if ( 'replace' === $action ) {
+				$backup_result = $backup_manager->backup_file( $target );
+				if ( is_wp_error( $backup_result ) ) {
+					// Backup failed — abort and rollback.
+					$failed[] = array(
+						'file'   => $relative,
+						'reason' => $backup_result->get_error_message(),
+					);
+
+					$rollback = $this->rollback_deploy( $backup_manager, $added, $replaced );
+					$this->cleanup_temp_files();
+
+					return new WP_Error(
+						'deploy_aborted',
+						__( 'Deploy aborted: backup failed. Rollback executed.', 'wp-puller' ),
+						array(
+							'failed_file' => $relative,
+							'rollback'    => $rollback,
+							'added'       => $added,
+							'replaced'    => $replaced,
+						)
+					);
+				}
+			}
+
+			// Ensure target directory exists.
+			$target_dir = dirname( $target );
+			if ( ! is_dir( $target_dir ) ) {
+				wp_mkdir_p( $target_dir );
+			}
+
+			// Copy file.
+			if ( ! @copy( $source, $target ) ) {
+				// Copy failed — abort and rollback.
+				$failed[] = array(
+					'file'   => $relative,
+					'reason' => __( 'Copy failed.', 'wp-puller' ),
+				);
+
+				$rollback = $this->rollback_deploy( $backup_manager, $added, $replaced );
+				$this->cleanup_temp_files();
+
+				return new WP_Error(
+					'deploy_aborted',
+					__( 'Deploy aborted: file copy failed. Rollback executed.', 'wp-puller' ),
+					array(
+						'failed_file' => $relative,
+						'rollback'    => $rollback,
+						'added'       => $added,
+						'replaced'    => $replaced,
+					)
+				);
+			}
+
+			$total_size += $file['size'];
+
+			if ( 'add' === $action ) {
+				$added[] = $relative;
+			} else {
+				$replaced[] = $relative;
+			}
+		}
+
+		// Build and save manifest.
+		$manifest = array(
+			'id'         => $backup_id,
+			'timestamp'  => current_time( 'mysql' ),
+			'source_path'=> empty( $source_path ) ? get_option( 'wp_puller_static_source_path', 'static-root-pages' ) : $source_path,
+			'branch'     => $branch,
+			'repo'       => $parsed['owner'] . '/' . $parsed['repo'],
+			'deployed_by'=> wp_get_current_user()->user_login,
+			'added'      => $added,
+			'replaced'   => $replaced,
+			'backed_up'  => $backup_manager->get_current_backed_up(),
+			'failed'     => $failed,
+			'total_size' => $total_size,
+		);
+
+		$backup_manager->write_manifest( $manifest );
+		$backup_manager->record_deploy_time();
+
+		$this->cleanup_temp_files();
+
+		return array(
+			'success'    => true,
+			'backup_id'  => $backup_id,
+			'manifest'   => $manifest,
+			'added'      => $added,
+			'replaced'   => $replaced,
+			'failed'     => $failed,
+			'total_size' => $total_size,
+			'total_size_fmt' => $this->format_file_size( $total_size ),
+		);
+	}
+
+	/**
+	 * Rollback files that were already deployed.
+	 *
+	 * @param WP_Puller_Static_Backup $backup_manager Backup manager instance.
+	 * @param array                  $added          Files that were added.
+	 * @param array                  $replaced       Files that were replaced.
+	 * @return array Rollback result.
+	 */
+	private function rollback_deploy( $backup_manager, $added, $replaced ) {
+		$restored = array();
+		$removed  = array();
+
+		// Restore replaced files from backup.
+		$backed_up = $backup_manager->get_current_backed_up();
+		foreach ( $backed_up as $entry ) {
+			$backup_file   = $backup_manager->get_backup_path() . '/' . $entry['backup'];
+			$original_path = ABSPATH . $entry['original'];
+
+			if ( file_exists( $backup_file ) ) {
+				if ( @copy( $backup_file, $original_path ) ) {
+					$restored[] = $entry['original'];
+				}
+			}
+		}
+
+		// Remove files that were added (they didn't exist before).
+		foreach ( $added as $relative ) {
+			$target = ABSPATH . $relative;
+			if ( file_exists( $target ) ) {
+				if ( @unlink( $target ) ) {
+					$removed[] = $relative;
+				}
+			}
+		}
+
+		return array(
+			'restored' => $restored,
+			'removed'  => $removed,
+		);
+	}
+
+	/**
 	 * Clean up temporary files.
 	 */
 	private function cleanup_temp_files() {

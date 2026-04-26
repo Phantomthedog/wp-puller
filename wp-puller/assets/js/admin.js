@@ -9,6 +9,8 @@
     'use strict';
 
     var WPPuller = {
+        lastDryRunResult: null,
+
         init: function() {
             this.bindEvents();
         },
@@ -21,6 +23,8 @@
             $('#wp-puller-regenerate-secret').on('click', this.regenerateSecret.bind(this));
             $('#wp-puller-clear-logs').on('click', this.clearLogs.bind(this));
             $('#wp-puller-static-dry-run').on('click', this.staticDryRun.bind(this));
+            $('#wp-puller-static-deploy').on('click', this.staticDeploy.bind(this));
+            $(document).on('click', '.wp-puller-static-rollback', this.staticRollback.bind(this));
 
             $(document).on('click', '.wp-puller-restore-backup', this.restoreBackup.bind(this));
             $(document).on('click', '.wp-puller-delete-backup', this.deleteBackup.bind(this));
@@ -368,9 +372,13 @@
                 },
                 success: function(response) {
                     if (response.success) {
+                        WPPuller.lastDryRunResult = response.data;
                         WPPuller.renderStaticDryRunResult(response.data, $result);
+                        $('#wp-puller-static-deploy').prop('disabled', false);
                     } else {
+                        WPPuller.lastDryRunResult = null;
                         WPPuller.showNotice(response.data.message, 'error');
+                        $('#wp-puller-static-deploy').prop('disabled', true);
                     }
                 },
                 error: function() {
@@ -443,6 +451,167 @@
             $('html, body').animate({
                 scrollTop: $container.offset().top - 50
             }, 300);
+        },
+
+        staticDeploy: function(e) {
+            var $btn = $(e.currentTarget);
+            var sourcePath = $('#wp-puller-static-source').val();
+
+            if (!sourcePath) {
+                this.showNotice('Please enter a source path.', 'error');
+                return;
+            }
+
+            if (!WPPuller.lastDryRunResult || !WPPuller.lastDryRunResult.summary || WPPuller.lastDryRunResult.summary.allowed_count < 1) {
+                this.showNotice('Please run a dry-run preview first.', 'error');
+                return;
+            }
+
+            var total = WPPuller.lastDryRunResult.summary.allowed_count || 0;
+            var replaceCount = 0;
+            var addCount = 0;
+            if (WPPuller.lastDryRunResult.allowed) {
+                for (var i = 0; i < WPPuller.lastDryRunResult.allowed.length; i++) {
+                    if (WPPuller.lastDryRunResult.allowed[i].action === 'replace') {
+                        replaceCount++;
+                    } else {
+                        addCount++;
+                    }
+                }
+            }
+
+            var confirmMsg = 'This will:\n';
+            confirmMsg += '• Add: ' + addCount + ' new files\n';
+            confirmMsg += '• Replace: ' + replaceCount + ' existing files\n';
+            confirmMsg += '• Backup: ' + replaceCount + ' files before overwrite\n';
+            confirmMsg += '• Total: ' + total + ' files\n\n';
+            confirmMsg += 'A rollback point will be created.\n\nContinue?';
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            this.setLoading($btn, true);
+
+            var $result = $('#wp-puller-deploy-result');
+            $result.hide().html('');
+
+            $.ajax({
+                url: wpPuller.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_puller_static_deploy',
+                    nonce: wpPuller.nonce,
+                    source_path: sourcePath
+                },
+                success: function(response) {
+                    if (response.success) {
+                        WPPuller.renderStaticDeployResult(response.data, $result);
+                        WPPuller.showNotice('Static deploy completed successfully.', 'success');
+                    } else {
+                        var msg = response.data.message || 'Deploy failed.';
+                        if (response.data.rollback && response.data.rollback.restored) {
+                            msg += ' Rollback restored ' + response.data.rollback.restored.length + ' files.';
+                        }
+                        WPPuller.showNotice(msg, 'error');
+                        WPPuller.renderStaticDeployResult(response.data, $result);
+                    }
+                },
+                error: function() {
+                    WPPuller.showNotice(wpPuller.strings.error, 'error');
+                },
+                complete: function() {
+                    WPPuller.setLoading($btn, false);
+                }
+            });
+        },
+
+        renderStaticDeployResult: function(data, $container) {
+            var html = '<div class="wp-puller-deploy-manifest">';
+
+            if (data.success) {
+                html += '<h4>Deploy Complete ✅</h4>';
+            } else {
+                html += '<h4>Deploy Failed ❌</h4>';
+            }
+
+            html += '<ul>';
+            html += '<li><strong>Added:</strong> ' + (data.added ? data.added.length : 0) + '</li>';
+            html += '<li><strong>Replaced:</strong> ' + (data.replaced ? data.replaced.length : 0) + '</li>';
+            html += '<li><strong>Failed:</strong> ' + (data.failed ? data.failed.length : 0) + '</li>';
+            if (data.backup_id) {
+                html += '<li><strong>Backup ID:</strong> <code>' + this.escapeHtml(data.backup_id) + '</code></li>';
+            }
+            if (data.total_size_fmt) {
+                html += '<li><strong>Total size:</strong> ' + this.escapeHtml(data.total_size_fmt) + '</li>';
+            }
+            html += '</ul>';
+
+            if (data.failed && data.failed.length) {
+                html += '<div class="wp-puller-deploy-failures">';
+                html += '<h5>Failures</h5><ul>';
+                for (var f = 0; f < data.failed.length; f++) {
+                    html += '<li><code>' + this.escapeHtml(data.failed[f].file) + '</code> — ' + this.escapeHtml(data.failed[f].reason) + '</li>';
+                }
+                html += '</ul></div>';
+            }
+
+            if (data.rollback) {
+                html += '<div class="wp-puller-deploy-rollback">';
+                html += '<h5>Rollback Result</h5><ul>';
+                html += '<li>Restored: ' + (data.rollback.restored ? data.rollback.restored.length : 0) + '</li>';
+                html += '<li>Removed: ' + (data.rollback.removed ? data.rollback.removed.length : 0) + '</li>';
+                html += '</ul></div>';
+            }
+
+            html += '</div>';
+            $container.html(html).show();
+
+            $('html, body').animate({
+                scrollTop: $container.offset().top - 50
+            }, 300);
+        },
+
+        staticRollback: function(e) {
+            var $btn = $(e.currentTarget);
+            var backupId = $btn.data('backup-id');
+
+            if (!backupId) {
+                this.showNotice('Invalid backup ID.', 'error');
+                return;
+            }
+
+            if (!confirm(wpPuller.strings.confirmRollback || 'Rollback to this backup point?')) {
+                return;
+            }
+
+            this.setLoading($btn, true);
+
+            $.ajax({
+                url: wpPuller.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_puller_static_rollback',
+                    nonce: wpPuller.nonce,
+                    backup_id: backupId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        WPPuller.showNotice(
+                            'Rollback complete. Restored ' + (response.data.count || 0) + ' files.',
+                            'success'
+                        );
+                    } else {
+                        WPPuller.showNotice(response.data.message, 'error');
+                    }
+                },
+                error: function() {
+                    WPPuller.showNotice(wpPuller.strings.error, 'error');
+                },
+                complete: function() {
+                    WPPuller.setLoading($btn, false);
+                }
+            });
         },
 
         copyToClipboard: function(e) {

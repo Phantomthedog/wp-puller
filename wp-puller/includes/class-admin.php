@@ -51,6 +51,13 @@ class WP_Puller_Admin {
     private $static_deployer;
 
     /**
+     * Static backup instance.
+     *
+     * @var WP_Puller_Static_Backup
+     */
+    private $static_backup;
+
+    /**
      * Constructor.
      *
      * @param WP_Puller_GitHub_API       $github_api      GitHub API instance.
@@ -58,13 +65,15 @@ class WP_Puller_Admin {
      * @param WP_Puller_Backup           $backup          Backup instance.
      * @param WP_Puller_Logger           $logger          Logger instance.
      * @param WP_Puller_Static_Deployer  $static_deployer Static deployer instance.
+     * @param WP_Puller_Static_Backup    $static_backup   Static backup instance.
      */
-    public function __construct( $github_api, $updater, $backup, $logger, $static_deployer = null ) {
+    public function __construct( $github_api, $updater, $backup, $logger, $static_deployer = null, $static_backup = null ) {
         $this->github_api      = $github_api;
         $this->updater         = $updater;
         $this->backup          = $backup;
         $this->logger          = $logger;
         $this->static_deployer = $static_deployer;
+        $this->static_backup   = $static_backup;
 
         $this->init_hooks();
     }
@@ -85,6 +94,8 @@ class WP_Puller_Admin {
         add_action( 'wp_ajax_wp_puller_regenerate_secret', array( $this, 'ajax_regenerate_secret' ) );
         add_action( 'wp_ajax_wp_puller_clear_logs', array( $this, 'ajax_clear_logs' ) );
         add_action( 'wp_ajax_wp_puller_static_dry_run', array( $this, 'ajax_static_dry_run' ) );
+        add_action( 'wp_ajax_wp_puller_static_deploy', array( $this, 'ajax_static_deploy' ) );
+        add_action( 'wp_ajax_wp_puller_static_rollback', array( $this, 'ajax_static_rollback' ) );
     }
 
     /**
@@ -148,6 +159,8 @@ class WP_Puller_Admin {
                 'confirmRestore'   => __( 'Are you sure you want to restore this backup? Your current theme will be replaced.', 'wp-puller' ),
                 'confirmDelete'    => __( 'Are you sure you want to delete this backup?', 'wp-puller' ),
                 'confirmRegenerate'=> __( 'Are you sure? You will need to update the secret in GitHub.', 'wp-puller' ),
+                'confirmDeploy'    => __( 'This will deploy static files to the live site. A backup will be created. Continue?', 'wp-puller' ),
+                'confirmRollback'  => __( 'This will restore files from the selected backup point. Continue?', 'wp-puller' ),
             ),
         ) );
     }
@@ -167,6 +180,7 @@ class WP_Puller_Admin {
             'backups'      => $this->backup->get_backups( wp_get_theme()->get_stylesheet() ),
             'logs'         => $this->logger->get_recent_logs( 10 ),
             'backup_class' => $this->backup,
+            'static_backups' => $this->static_backup ? $this->static_backup->list_backups() : array(),
         );
 
         include WP_PULLER_PLUGIN_DIR . 'templates/admin-page.php';
@@ -476,5 +490,90 @@ class WP_Puller_Admin {
         }
 
         wp_send_json_success( $report );
+    }
+
+    /**
+     * AJAX: Deploy static files.
+     */
+    public function ajax_static_deploy() {
+        $this->verify_ajax_request();
+
+        if ( ! $this->static_deployer || ! $this->static_backup ) {
+            wp_send_json_error( array( 'message' => __( 'Static deployer or backup manager not available.', 'wp-puller' ) ) );
+        }
+
+        $source_path = isset( $_POST['source_path'] ) ? sanitize_text_field( wp_unslash( $_POST['source_path'] ) ) : 'static-root-pages';
+
+        $result = $this->static_deployer->deploy( $source_path, $this->static_backup );
+
+        if ( is_wp_error( $result ) ) {
+            $error_data = $result->get_error_data();
+            $response = array( 'message' => $result->get_error_message() );
+            if ( is_array( $error_data ) ) {
+                $response = array_merge( $response, $error_data );
+            }
+            wp_send_json_error( $response );
+        }
+
+        // Log success.
+        $this->logger->log(
+            sprintf(
+                /* translators: %1$s: added count, %2$s: replaced count, %3$s: backup ID */
+                __( 'Static deploy complete: %1$s added, %2$s replaced. Backup: %3$s', 'wp-puller' ),
+                count( $result['added'] ),
+                count( $result['replaced'] ),
+                $result['backup_id']
+            ),
+            WP_Puller_Logger::STATUS_SUCCESS,
+            WP_Puller_Logger::SOURCE_MANUAL,
+            array(
+                'backup_id' => $result['backup_id'],
+                'added'     => count( $result['added'] ),
+                'replaced'  => count( $result['replaced'] ),
+            )
+        );
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * AJAX: Rollback static deploy.
+     */
+    public function ajax_static_rollback() {
+        $this->verify_ajax_request();
+
+        if ( ! $this->static_backup ) {
+            wp_send_json_error( array( 'message' => __( 'Static backup manager not available.', 'wp-puller' ) ) );
+        }
+
+        $backup_id = isset( $_POST['backup_id'] ) ? sanitize_text_field( wp_unslash( $_POST['backup_id'] ) ) : '';
+
+        if ( empty( $backup_id ) ) {
+            wp_send_json_error( array( 'message' => __( 'Backup ID is required.', 'wp-puller' ) ) );
+        }
+
+        $result = $this->static_backup->rollback( $backup_id );
+
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+        }
+
+        // Log success.
+        $this->logger->log(
+            sprintf(
+                /* translators: %1$d: restored count, %2$s: backup ID */
+                __( 'Static rollback complete: %1$d files restored from %2$s', 'wp-puller' ),
+                $result['count'],
+                $backup_id
+            ),
+            WP_Puller_Logger::STATUS_SUCCESS,
+            WP_Puller_Logger::SOURCE_MANUAL,
+            array(
+                'backup_id' => $backup_id,
+                'restored'  => $result['count'],
+            )
+        );
+
+        wp_send_json_success( $result );
     }
 }
