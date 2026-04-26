@@ -691,6 +691,7 @@ class WP_Puller_Static_Deployer {
 		if ( is_wp_error( $rate_check ) ) {
 			return $rate_check;
 		}
+		$backup_manager->record_deploy_time();
 
 		// Recompute dry_run server-side. Do NOT trust client manifest.
 		$dry_run_result = $this->dry_run( $source_path );
@@ -846,7 +847,6 @@ class WP_Puller_Static_Deployer {
 		);
 
 		$backup_manager->write_manifest( $manifest );
-		$backup_manager->record_deploy_time();
 
 		$this->cleanup_temp_files();
 
@@ -888,8 +888,12 @@ class WP_Puller_Static_Deployer {
 		}
 
 		// Remove files that were added (they didn't exist before).
+		$abspath_real = realpath( ABSPATH );
 		foreach ( $added as $relative ) {
-			$target = ABSPATH . $relative;
+			$target = realpath( ABSPATH . $relative );
+			if ( false === $target || strpos( $target, $abspath_real . '/' ) !== 0 ) {
+				continue; // Skip invalid paths.
+			}
 			if ( file_exists( $target ) ) {
 				if ( @unlink( $target ) ) {
 					$removed[] = $relative;

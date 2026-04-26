@@ -330,7 +330,14 @@ class WP_Puller_Static_Backup {
 				continue;
 			}
 
-			$backup_file  = $backup_path . '/' . $entry['backup'];
+			$backup_file = realpath( $backup_path . '/' . $entry['backup'] );
+			if ( false === $backup_file || strpos( $backup_file, realpath( $backup_path ) . '/' ) !== 0 ) {
+				$failed[] = array(
+					'file'   => $entry['original'],
+					'reason' => __( 'Backup file path invalid.', 'wp-puller' ),
+				);
+				continue;
+			}
 			$original_path = ABSPATH . $entry['original'];
 
 			// Verify backup file exists.

@@ -161,7 +161,28 @@ $backup2->record_deploy_time();
 $rl2 = $backup2->check_rate_limit();
 ok( is_wp_error( $rl2 ), 'rate limit blocks within 60 seconds' );
 
-echo "\n=== Test 10: cleanup ===\n";
+echo "\n=== Test 10: rollback rejects manifest path escape ===\n";
+$backup3 = new WP_Puller_Static_Backup( new MockLogger() );
+$bid3 = $backup3->start_backup();
+// Create a tampered manifest with a backup path that escapes the backup directory.
+$tampered_manifest = array(
+	'id'        => $bid3,
+	'timestamp' => date( 'c' ),
+	'backed_up' => array(
+		array(
+			'original' => 'safe-file.html',
+			'backup'   => '../../../etc/passwd',
+			'size'     => 0,
+		),
+	),
+);
+$backup3->write_manifest( $tampered_manifest );
+$result = $backup3->rollback( $bid3 );
+ok( ! is_wp_error( $result ), 'rollback with tampered manifest returns array (not fatal error)' );
+ok( $result['count'] === 0, 'rollback restored 0 files from tampered manifest' );
+ok( count( $result['failed'] ) === 1, 'rollback reports 1 failed file from tampered manifest' );
+
+echo "\n=== Test 11: cleanup ===\n";
 // Remove test dirs.
 function rrmdir( $dir ) {
 	if ( is_dir( $dir ) ) {
